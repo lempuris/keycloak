@@ -1,0 +1,96 @@
+# Keycloak PoC — single-node stack (ROADMAP Phase 1)
+#
+# Run from the repository root:
+#   docker compose -f infrastructure/compose/docker-compose.yml --env-file .env up -d
+# or use infrastructure/scripts/poc.ps1 up
+#
+# Image tags are pinned here and only here (ROADMAP constraint 1: never `latest`).
+
+name: keycloak-poc
+
+services:
+  postgres:
+    image: postgres:17.10-alpine
+    container_name: kc-poc-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Local mail catcher standing in for M365 SMTP (design.md §2).
+  # UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.30.6
+    container_name: kc-poc-mailpit
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "8025:8025"   # web UI
+      - "1025:1025"   # SMTP (internal name `mailpit` is what the realm points at)
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.1
+    container_name: kc-poc-keycloak
+    # `start` (not start-dev) so we exercise the production runtime against
+    # Postgres. HTTP + relaxed hostname are the only dev concessions; Phase 7
+    # puts TLS and a reverse proxy in front.
+    command:
+      - start
+      - --import-realm
+    environment:
+      # --- Database (holds realm config, users, persistent sessions) ---
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # --- Bootstrap admin (temporary master-realm account, Phase 7 revisits) ---
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+
+      # --- HTTP / hostname (local only) ---
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_STRICT: "false"
+
+      # --- Management interface: /health/*, /metrics on :9000 (Phase 1 criterion) ---
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+
+      # --- Logging: JSON is the audit-export path (design.md §2, no listener SPI) ---
+      KC_LOG_CONSOLE_OUTPUT: ${KC_LOG_CONSOLE_OUTPUT:-default}
+    volumes:
+      # Realm config as code. Imported on first start; see docs for re-apply.
+      - ../../keycloak/realms:/opt/keycloak/data/import:ro
+    ports:
+      - "8080:8080"   # public
+      - "9000:9000"   # management (health/metrics)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The Keycloak image is distroless-ish: no curl/wget. Use bash's /dev/tcp.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+    name: keycloak-poc-postgres-data

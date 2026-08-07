@@ -1,0 +1,164 @@
+{
+  "realm": "guarantee-gateway",
+  "displayName": "Credeq Guarantee Gateway",
+  "displayNameHtml": "<strong>Credeq</strong> Guarantee Gateway",
+  "enabled": true,
+  "sslRequired": "external",
+
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "verifyEmail": false,
+  "editUsernameAllowed": false,
+  "rememberMe": false,
+
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "offlineSessionMaxLifespanEnabled": true,
+  "offlineSessionMaxLifespan": 5184000,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "actionTokenGeneratedByUserLifespan": 300,
+
+  "bruteForceProtected": true,
+  "permanentLockout": true,
+  "failureFactor": 3,
+  "maxTemporaryLockouts": 0,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and specialChars(1) and notUsername(undefined) and passwordHistory(3)",
+
+  "eventsEnabled": true,
+  "eventsExpiration": 604800,
+  "eventsListeners": ["jboss-logging"],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@credeq-poc.local",
+    "fromDisplayName": "Credeq Guarantee Gateway",
+    "ssl": "false",
+    "starttls": "false",
+    "auth": "false"
+  },
+
+  "roles": {
+    "realm": [
+      {
+        "name": "facility-holder",
+        "description": "Facility holder - can view and manage their own guarantee facilities."
+      },
+      {
+        "name": "broker",
+        "description": "Broker - acts on behalf of facility holders."
+      }
+    ]
+  },
+
+  "groups": [
+    {
+      "name": "facility-holders",
+      "path": "/facility-holders",
+      "realmRoles": ["facility-holder"]
+    },
+    {
+      "name": "brokers",
+      "path": "/brokers",
+      "realmRoles": ["broker"]
+    }
+  ],
+
+  "clients": [
+    {
+      "clientId": "guarantee-gateway-za",
+      "name": "Guarantee Gateway Portal (ZA)",
+      "description": "Angular SPA - public client, Authorization Code + PKCE (S256).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "rootUrl": "http://localhost:4200",
+      "baseUrl": "/",
+      "redirectUris": ["http://localhost:4200/*"],
+      "webOrigins": ["http://localhost:4200"],
+      "fullScopeAllowed": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:4200/*",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "backchannel.logout.session.required": "true"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "basic",
+        "email"
+      ],
+      "optionalClientScopes": ["address", "phone"]
+    }
+  ],
+
+  "scopeMappings": [
+    {
+      "client": "guarantee-gateway-za",
+      "roles": ["facility-holder", "broker"]
+    }
+  ],
+
+  "users": [
+    {
+      "username": "thabo.mokoena@example.com",
+      "email": "thabo.mokoena@example.com",
+      "firstName": "Thabo",
+      "lastName": "Mokoena",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "PocDemo!2026x",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["facility-holder"],
+      "groups": ["/facility-holders"]
+    },
+    {
+      "username": "lerato.dlamini@example.com",
+      "email": "lerato.dlamini@example.com",
+      "firstName": "Lerato",
+      "lastName": "Dlamini",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "PocDemo!2026x",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["broker"],
+      "groups": ["/brokers"]
+    }
+  ]
+}

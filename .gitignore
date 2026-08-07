@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+*.local.env
+
+# Realm exports taken from a running instance for inspection (promote
+# deliberately into keycloak/realms/ instead of committing raw dumps)
+keycloak/realms/*.export.json
+
+# Build output
+target/
+dist/
+node_modules/
+bin/
+obj/
+
+# Editor / OS
+.idea/
+.vs/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
