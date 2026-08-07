@@ -1,0 +1,14 @@
+{
+  "name": "marshall-mock",
+  "version": "0.1.0",
+  "description": "Stand-in for Marshall's broker lifecycle feed into Keycloak.",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  }
+}
