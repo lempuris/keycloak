@@ -110,8 +110,13 @@ services:
       POC_ISSUER: http://localhost:8080/realms/guarantee-gateway
       POC_AUDIENCE: guarantee-gateway-api
       POC_CORS_ALLOWED_ORIGINS: http://localhost:4200
+      # Business system of record, called per request for facility linkage.
+      POC_MARSHALL_URL: http://marshall-mock:8090
     ports:
       - "8081:8081"
+    # Deliberately NOT depending on marshall-mock. The API must start and serve
+    # identity-only endpoints whether or not the business system is up; a
+    # startup dependency would quietly assert the opposite.
     depends_on:
       keycloak:
         condition: service_healthy

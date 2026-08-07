@@ -15,6 +15,10 @@ poc:
     audience: ${POC_AUDIENCE:guarantee-gateway-api}
   cors:
     allowed-origins: ${POC_CORS_ALLOWED_ORIGINS:http://localhost:4200}
+  marshall:
+    # The business system of record, called per request for facility linkage.
+    # Internal URL: this one is resolved by the API container, not the browser.
+    base-url: ${POC_MARSHALL_URL:http://marshall-mock:8090}
 
 management:
   endpoints:

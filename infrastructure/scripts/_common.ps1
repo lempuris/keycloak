@@ -501,7 +501,17 @@ function Invoke-JsonRequest {
             $req.Content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, 'application/json')
         }
 
-        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        # A refused connection is a first-class outcome here, not an error: the
+        # outage tests stop a service on purpose and then ask what happened.
+        # Reported as status 0 so callers assert on it like any other status,
+        # instead of the script aborting under $ErrorActionPreference='Stop'.
+        try {
+            $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        }
+        catch {
+            return @{ Status = 0; Body = ''; Json = $null; Error = $_.Exception.Message }
+        }
+
         $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
 
         $parsed = $null

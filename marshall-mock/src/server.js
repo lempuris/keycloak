@@ -21,6 +21,7 @@
 
 import express from 'express';
 
+import { findFacilities } from './facilities.js';
 import {
   createUser,
   deactivateUser,
@@ -57,6 +58,28 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (_req, res) => res.json({ status: 'UP' }));
+
+/**
+ * Facility linkage for a user — the *other* direction of the Marshall
+ * relationship, and the one that runs on every request.
+ *
+ *   provisioning:  Marshall  --->  Keycloak     (writes, occasional)
+ *   this endpoint: API       --->  Marshall     (reads, per request)
+ *
+ * The API calls this instead of carrying facilities in the token. Business data
+ * in a JWT is a copy: it goes stale the moment Marshall changes, stays valid
+ * until the token expires, and is readable by anyone holding the token.
+ *
+ * Note what is NOT here: no token is validated and no authorization happens.
+ * The API has already done that. This answers "what is this user linked to",
+ * which is a business question, and the split is deliberate.
+ */
+app.get('/facilities/:username', (req, res) => {
+  res.json({
+    username: req.params.username,
+    facilities: findFacilities(req.params.username),
+  });
+});
 
 /**
  * Resolves the Keycloak user behind a Marshall broker identifier.

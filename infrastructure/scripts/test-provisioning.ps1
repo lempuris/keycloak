@@ -268,6 +268,62 @@ if ($supportG) {
     }
 }
 
+# --- 10. Marshall outage degrades data, never authentication ---
+#
+# The whole reason the federation/user-storage-SPI option was dropped: Marshall
+# sits on the data path and never on the login path. That is easy to assert on a
+# whiteboard and only convincing if you actually stop the service, so this stops
+# it. Logging in and identity endpoints must keep working; only facility linkage
+# is allowed to fail, and it must fail visibly (503) rather than quietly return
+# an empty list, which would tell the user they have no facilities.
+Write-Host ''
+Write-Host '10. Marshall outage: logins survive, facility data degrades' -ForegroundColor Cyan
+$ComposeFile = Join-Path $RepoRoot 'infrastructure\compose\docker-compose.yml'
+
+function Invoke-ComposeQuiet {
+    param([string[]]$ComposeArgs)
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & docker compose -f $ComposeFile --env-file $EnvFile @ComposeArgs 2>&1 | Out-Null }
+    finally { $ErrorActionPreference = $previous }
+}
+
+Invoke-ComposeQuiet @('stop', 'marshall-mock')
+try {
+    $down = Invoke-MarshallApi -Path '/health'
+    Assert-That -Name 'Marshall is genuinely down' -Condition ($down.Status -ne 200) -Detail "status: $($down.Status)"
+
+    # The load-bearing assertion: authentication does not involve Marshall.
+    $outageLogin = Invoke-PkceLogin -Username $dotenv['POC_TEST_USER'] -Password $password
+    Assert-That -Name 'Users can still log in with Marshall down' -Condition ([bool]$outageLogin.Success) -Detail $outageLogin.Error
+
+    if ($outageLogin.Success) {
+        $outageToken = (Invoke-TokenExchange -Code $outageLogin.Code -Verifier $outageLogin.Verifier).access_token
+
+        $identity = Invoke-ApiRequest -Path '/api/me' -Token $outageToken
+        Assert-That -Name 'Identity endpoint unaffected (200)' -Condition ($identity.Status -eq 200) -Detail "status: $($identity.Status)"
+
+        $degraded = Invoke-ApiRequest -Path '/api/facilities' -Token $outageToken
+        Assert-That -Name 'Facility endpoint fails loudly (503, not an empty 200)' `
+                    -Condition ($degraded.Status -eq 503) `
+                    -Detail "status: $($degraded.Status) - a 200 here would mean the API invented 'no facilities'"
+    }
+}
+finally {
+    # Always bring it back, even if an assertion above threw.
+    Invoke-ComposeQuiet @('start', 'marshall-mock')
+}
+
+$recoveryDeadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $recoveryDeadline -and (Invoke-MarshallApi -Path '/health').Status -ne 200) {
+    Start-Sleep -Seconds 2
+}
+$recoveredToken = Get-UserAccessToken -Username $dotenv['POC_TEST_USER'] -Password $password
+$recovered = Invoke-ApiRequest -Path '/api/facilities' -Token $recoveredToken
+Assert-That -Name 'Facility data returns when Marshall comes back' -Condition ($recovered.Status -eq 200) -Detail "status: $($recovered.Status)"
+Assert-That -Name 'and the linkage is resolved from Marshall, not the API' `
+            -Condition ($recovered.Json.facilities.Count -gt 0) -Detail "count: $($recovered.Json.facilities.Count)"
+
 # --- teardown ---
 Write-Host ''
 Write-Host 'Teardown' -ForegroundColor Cyan

@@ -75,7 +75,7 @@ login form, posting credentials, and reading the OTP out of Mailpit.
 .\infrastructure\scripts\test-api.ps1                         # 15 — SPA -> API, role enforcement
 .\infrastructure\scripts\test-session-persistence.ps1         # 7  — sessions survive restart
 .\infrastructure\scripts\test-otp-flow.ps1                    # 28 — 27 pass, 1 deliberately red
-.\infrastructure\scripts\test-provisioning.ps1                # 44 — Marshall lifecycle -> Keycloak
+.\infrastructure\scripts\test-provisioning.ps1                # 50 — Marshall lifecycle + outage behaviour
 ```
 
 `test-otp-flow.ps1` asserts that failed OTP attempts feed the brute-force
@@ -94,7 +94,7 @@ Shared helpers live in `infrastructure/scripts/_common.ps1`.
 | 2 — Core realm as code | Done. Applied by keycloak-config-cli 6.5.1, idempotent (2nd run = zero changes) |
 | 3 — App integration | Done. Spring Boot 3.5.3 API + Angular 22 SPA, 200/403 verified in scripts and in a browser |
 | 4 — Email OTP flow | Done, **1 requirement unmet** (Finding 3) |
-| 5 — Marshall mock | Done. Express 5 service on `:8090` driving the Admin API as a scoped service account; 44 assertions |
+| 5 — Marshall mock | Done. Express 5 service on `:8090` driving the Admin API as a scoped service account, and serving facility linkage to the API; 50 assertions |
 | 6 — Clustering (JDBC_PING) | Not started. Highest value for the Azure build |
 | 7–8 — TLS/proxy, key rotation, pipeline, cutover | Not started |
 
@@ -171,9 +171,16 @@ practice we want in production, and the smoke test asserts the claim still arriv
 **Authorization split** (§4): Keycloak issues identity and a coarse realm role
 (`facility-holder` / `broker`). Facility linkage is *not* a token claim — the API
 resolves it server-side from the token's identity, and `test-api.ps1` fails if
-any business claim appears in the JWT. In this PoC the Marshall lookup is an
-in-process stand-in (`backend/.../facility/FacilityDirectory.java`), not a
-network call.
+any business claim appears in the JWT. The lookup is a real HTTP call from the
+API to `marshall-mock` (`backend/.../facility/FacilityDirectory.java`), with
+timeouts, because it sits in the request path.
+
+That call makes the availability story testable rather than asserted. Stop
+`marshall-mock` and **logins keep working**, `/api/me` still returns 200, and
+only `/api/facilities` fails — with a **503, not an empty 200**, because "the
+business system is down" and "this user has no facilities" are different answers
+and a newly provisioned broker legitimately has none. `test-provisioning.ps1`
+section 10 stops the container and asserts exactly that.
 
 ## Realm config as code
 

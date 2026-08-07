@@ -2,7 +2,7 @@
 
 Date: 2026-08-07
 Stack: Keycloak 26.7.1, PostgreSQL 17.10, Node 22.22 / Express 5.1.0, Docker Compose.
-Test: `infrastructure/scripts/test-provisioning.ps1` — **44 checks, all passing**.
+Test: `infrastructure/scripts/test-provisioning.ps1` — **50 checks, all passing**.
 
 ## What was built
 
@@ -25,6 +25,7 @@ rejected user-storage-SPI/federation option could not offer.
 | `POST /brokers/:username/reactivate` | reinstated | re-enable |
 | `GET /brokers/:username` | — | read-back, used by the tests |
 | `DELETE /brokers/:username` | *not a Marshall event* | PoC cleanup only |
+| `GET /facilities/:username` | *the read direction* | none — business data served **to** the API |
 
 Delete is deliberately outside the lifecycle contract: Marshall deactivates, it never
 deletes, because the audit trail of who did what has to outlive the account.
@@ -38,6 +39,7 @@ deletes, because the audit trail of who did what has to outlive the account.
 | Deactivating kills live sessions | Yes — sessions drop to zero, confirmed independently via the admin token |
 | API access dies within one access-token lifetime | Yes — refresh dies instantly, access token survives to `exp`; bound asserted at ≤ 300 s |
 | Service account cannot act outside its scoped roles | Yes — 403 on create-client, realm-update, and the master realm |
+| Marshall is on the data path, never the login path | Yes — with the mock stopped, logins and `/api/me` still work; only `/api/facilities` fails, and it fails as 503 |
 | Support runbook documented | `docs/runbook-user-support.md` |
 | Credential-migration options written up | `docs/decision-credential-migration.md` |
 
@@ -138,7 +140,44 @@ Users are not configuration. The realm file owns clients, flows, roles and setti
 the provisioning feed owns users. The seeded users in the realm JSON are a PoC
 convenience and must not survive into production.
 
-## Finding 5 — two things that cost time and are worth knowing
+## Finding 5 — the pivot's central claim, now demonstrated rather than asserted
+
+Marshall has **two** relationships with the platform, and only one of them was
+modelled at first:
+
+```
+provisioning:  Marshall  --->  Keycloak     (writes, occasional)
+facilities:    API       --->  Marshall     (reads, every request)
+```
+
+`FacilityDirectory` used to be a hardcoded map inside the API, which meant the
+second arrow existed only on paper. It now makes a real HTTP call to the mock,
+with a 2 s connect and 3 s read timeout — **timeouts are not optional on a call
+in the request path**, because a hung Marshall would otherwise exhaust the API's
+threads and turn one system's outage into two.
+
+Stopping the mock and re-running the tests gives the property the whole Marshall
+pivot was chosen for:
+
+| With Marshall down | Result |
+|---|---|
+| Log in (password + OTP) | **Works** |
+| `GET /api/me` | **200** |
+| `GET /api/facilities` | **503** |
+| Marshall restarted | back to 200, data intact |
+
+The failure is a **503, not an empty 200**. That distinction matters more than it
+looks: an empty list is a truthful answer for a newly provisioned broker who has
+no facilities yet, so returning one on failure would tell an existing user they
+have no facilities and hide the outage from monitoring at the same time. "I don't
+know" and "none" are different answers and the API must not conflate them.
+
+This is also the concrete counter-argument to reviving federation. Under the
+rejected user-storage-SPI design, the top row of that table would read **fails**
+— Marshall would be in the login path, and its outage would lock everybody out
+rather than degrade one screen.
+
+## Finding 6 — two things that cost time and are worth knowing
 
 - **Keycloak `description` fields are `varchar(255)`.** A longer client description
   makes the Admin API return `500 unknown_error`; the cause is only visible in the
