@@ -15,6 +15,7 @@ $BaseUrl     = 'http://localhost:8080'
 $MgmtUrl     = 'http://localhost:9000'
 $ApiBaseUrl  = 'http://localhost:8081'
 $SpaBaseUrl  = 'http://localhost:4200'
+$MailpitUrl  = 'http://localhost:8025'
 $Realm       = 'guarantee-gateway'
 $ClientId    = 'guarantee-gateway-za'
 $ApiClientId = 'guarantee-gateway-api'
@@ -157,6 +158,80 @@ function Invoke-FormPost {
     $resp
 }
 
+# -------------------------------------------------------------- mailbox ---
+
+# Mailpit stands in for M365. These helpers let the tests read the OTP that
+# Keycloak actually emailed, rather than asserting against a code we made up.
+
+<#
+    Empties the mailbox and waits until it really is empty.
+
+    The delete is not immediately reflected in the message list, so without this
+    wait a subsequent read can return an already-deleted message - whose body
+    then 404s. That race produced a false "a lockout email was sent" result.
+#>
+function Clear-Mailbox {
+    param([int]$TimeoutSeconds = 10)
+    try { Invoke-RestMethod -Method Delete -Uri "$MailpitUrl/api/v1/messages" | Out-Null } catch { }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            if ((Invoke-RestMethod "$MailpitUrl/api/v1/messages?limit=1").total -eq 0) { return }
+        }
+        catch { return }
+        Start-Sleep -Milliseconds 200
+    }
+}
+
+function Get-MailboxMessages {
+    param([string]$ToAddress)
+    $list = Invoke-RestMethod "$MailpitUrl/api/v1/messages?limit=50"
+    # Callers must wrap the result in @() - PowerShell unrolls a single-element
+    # array on return. Do NOT "fix" that with a leading comma here: `,@()` on an
+    # empty mailbox yields a one-element array containing an empty array, which
+    # reads as a phantom message at the call site.
+    if (-not $ToAddress) { return @($list.messages) }
+    # `$_.To.Address` looks right but binds to System.Array's Address() method
+    # rather than enumerating the recipients, so project explicitly.
+    @($list.messages | Where-Object {
+        @($_.To | ForEach-Object { $_.Address }) -contains $ToAddress
+    })
+}
+
+function Get-MessageBody {
+    param([string]$Id)
+    try {
+        $full = Invoke-RestMethod "$MailpitUrl/api/v1/message/$Id"
+    }
+    catch {
+        # The listing can briefly outlive the message itself.
+        return $null
+    }
+    if ($full.Text) { return $full.Text }
+    return $full.HTML
+}
+
+<#
+    Waits for an OTP email and returns the 6-digit code.
+    The extension's template reads: "Your email login code is NNNNNN and is
+    valid for N minutes." - so take the first 6-digit run.
+#>
+function Get-OtpCodeFromMailbox {
+    param([string]$ToAddress, [int]$TimeoutSeconds = 25)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $messages = @(Get-MailboxMessages -ToAddress $ToAddress)
+        if ($messages.Count -gt 0) {
+            $body = Get-MessageBody -Id $messages[0].ID
+            if ($body -match '\b(\d{6})\b') { return $Matches[1] }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $null
+}
+
 # ------------------------------------------------------------------ oauth ---
 
 function New-PkceVerifier {
@@ -192,7 +267,12 @@ function Invoke-PkceLogin {
     param(
         [string]$Username,
         [string]$Password,
-        [hashtable]$Jar = @{}
+        [hashtable]$Jar = @{},
+        # Supply a code explicitly (e.g. a deliberately wrong or expired one)
+        # instead of reading the real one out of Mailpit.
+        [string]$OtpCode,
+        # Stop at the OTP prompt without answering it.
+        [switch]$NoOtp
     )
 
     $verifier  = New-PkceVerifier
@@ -209,7 +289,7 @@ function Invoke-PkceLogin {
             if ($loc -match '[?&]code=([^&]+)') {
                 return @{
                     Success = $true; Code = $Matches[1]; Verifier = $verifier
-                    Jar = $Jar; PromptedForPassword = $false; Location = $loc
+                    Jar = $Jar; PromptedForPassword = $false; PromptedForOtp = $false; Location = $loc
                 }
             }
             return @{ Success = $false; Code = $null; Location = $loc; Jar = $Jar; Error = 'redirect without code' }
@@ -221,6 +301,10 @@ function Invoke-PkceLogin {
         }
         $action = [System.Net.WebUtility]::HtmlDecode($Matches[1])
 
+        # Clear the mailbox before submitting the password so the OTP we read
+        # back is definitely the one this login triggered, not a stale one.
+        if (-not $OtpCode) { Clear-Mailbox }
+
         $resp = Invoke-FormPost -Client $client -Url $action -Jar $Jar -Fields @{
             username = $Username
             password = $Password
@@ -231,13 +315,60 @@ function Invoke-PkceLogin {
             if ($location -match '[?&]code=([^&]+)') {
                 return @{
                     Success = $true; Code = $Matches[1]; Verifier = $verifier
-                    Jar = $Jar; PromptedForPassword = $true; Location = $location
+                    Jar = $Jar; PromptedForPassword = $true; PromptedForOtp = $false; Location = $location
                 }
             }
             return @{ Success = $false; Code = $null; Location = $location; Jar = $Jar; Error = 'redirect without code' }
         }
 
         $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+        # Second factor: the email-OTP form from the pinned extension.
+        if ($body -match '(?s)id="kc-email-code-login-form".*?action="([^"]+)"') {
+            $otpAction = [System.Net.WebUtility]::HtmlDecode($Matches[1])
+
+            if ($NoOtp) {
+                return @{
+                    Success = $false; Code = $null; Jar = $Jar; OtpAction = $otpAction
+                    PromptedForPassword = $true; PromptedForOtp = $true; Error = 'stopped at OTP prompt'
+                }
+            }
+
+            $code = $OtpCode
+            if (-not $code) {
+                $code = Get-OtpCodeFromMailbox -ToAddress $Username
+                if (-not $code) {
+                    return @{
+                        Success = $false; Code = $null; Jar = $Jar
+                        PromptedForPassword = $true; PromptedForOtp = $true; Error = 'no OTP email arrived'
+                    }
+                }
+            }
+
+            $otpResp = Invoke-FormPost -Client $client -Url $otpAction -Jar $Jar -Fields @{
+                code  = $code
+                login = 'Sign in'
+            }
+
+            if ($otpResp.StatusCode.value__ -ge 300 -and $otpResp.StatusCode.value__ -lt 400 -and $otpResp.Headers.Location) {
+                $otpLocation = $otpResp.Headers.Location.ToString()
+                if ($otpLocation -match '[?&]code=([^&]+)') {
+                    return @{
+                        Success = $true; Code = $Matches[1]; Verifier = $verifier; OtpUsed = $code
+                        Jar = $Jar; PromptedForPassword = $true; PromptedForOtp = $true; Location = $otpLocation
+                    }
+                }
+                return @{ Success = $false; Code = $null; Location = $otpLocation; Jar = $Jar; Error = 'redirect without code' }
+            }
+
+            $otpBody = $otpResp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            return @{
+                Success = $false; Code = $null; Html = $otpBody; Jar = $Jar; OtpUsed = $code
+                PromptedForPassword = $true; PromptedForOtp = $true
+                Error = "OTP rejected (status $($otpResp.StatusCode.value__))"
+            }
+        }
+
         return @{ Success = $false; Code = $null; Html = $body; Jar = $Jar; Error = "status $($resp.StatusCode.value__)" }
     }
     finally {

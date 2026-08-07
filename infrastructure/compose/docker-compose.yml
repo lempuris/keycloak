@@ -72,6 +72,11 @@ services:
 
       # --- Logging: JSON is the audit-export path (design.md §2, no listener SPI) ---
       KC_LOG_CONSOLE_OUTPUT: ${KC_LOG_CONSOLE_OUTPUT:-default}
+    volumes:
+      # The platform's ONLY extension (design.md §5): a pinned, checksum-verified
+      # community email-OTP authenticator. Not written by us. Provenance and the
+      # evaluation of alternatives are in docs/decision-email-otp-extension.md.
+      - ../../keycloak/extensions:/opt/keycloak/providers:ro
     ports:
       - "8080:8080"   # public
       - "9000:9000"   # management (health/metrics)

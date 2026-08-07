@@ -55,6 +55,69 @@
     "auth": "false"
   },
 
+  "browserFlow": "guarantee-gateway-browser",
+
+  "authenticationFlows": [
+    {
+      "alias": "guarantee-gateway-browser",
+      "description": "design.md §5: Cookie (ALTERNATIVE) -> Forms (ALTERNATIVE) [Username Password Form -> Email OTP]. Built-in authenticators plus the pinned email-OTP extension; no custom code.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "flowAlias": "guarantee-gateway-forms",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "authenticatorFlow": true,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "guarantee-gateway-forms",
+      "description": "Password then email OTP. Both REQUIRED, so failures at either step feed the same brute-force counter.",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "email-otp-authenticator",
+          "authenticatorConfig": "guarantee-gateway-email-otp",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false,
+          "userSetupAllowed": false
+        }
+      ]
+    }
+  ],
+
+  "authenticatorConfig": [
+    {
+      "alias": "guarantee-gateway-email-otp",
+      "config": {
+        "length": "6",
+        "ttl": "300",
+        "forceSecondFactor": "true"
+      }
+    }
+  ],
+
   "roles": {
     "realm": [
       {
