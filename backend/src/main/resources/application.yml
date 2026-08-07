@@ -1,0 +1,31 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: guarantee-gateway-api
+
+poc:
+  jwt:
+    # Internal URL - resolved from inside the Docker network.
+    jwk-set-uri: ${POC_JWK_SET_URI:http://keycloak:8080/realms/guarantee-gateway/protocol/openid-connect/certs}
+    # External URL - what Keycloak stamps into the `iss` claim, because that is
+    # the hostname the browser used. See SecurityConfig for why these differ.
+    issuer: ${POC_ISSUER:http://localhost:8080/realms/guarantee-gateway}
+    audience: ${POC_AUDIENCE:guarantee-gateway-api}
+  cors:
+    allowed-origins: ${POC_CORS_ALLOWED_ORIGINS:http://localhost:4200}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    org.springframework.security: INFO

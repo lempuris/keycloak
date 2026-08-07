@@ -1,0 +1,160 @@
+:root {
+  --bg: #0f1218;
+  --card: #171c26;
+  --border: #262d3a;
+  --text: #e6e9ef;
+  --muted: #9aa4b6;
+  --accent: #4f8cff;
+  --ok: #2ea36b;
+  --denied: #d98324;
+  --error: #d9534f;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1.5rem 4rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif;
+  max-width: 900px;
+  margin-inline: auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.badge {
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.15rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+p {
+  margin: 0 0 0.85rem;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+button {
+  background: #212837;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.5rem 0.9rem;
+  margin: 0 0.5rem 0.5rem 0;
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+button.expected small {
+  color: var(--ok);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+code.role {
+  background: #212837;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.1rem 0.45rem;
+  margin-right: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.status {
+  font-size: 0.8rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.6rem;
+  font-weight: 600;
+}
+
+.status.ok {
+  background: rgba(46, 163, 107, 0.18);
+  color: var(--ok);
+}
+
+.status.denied {
+  background: rgba(217, 131, 36, 0.18);
+  color: var(--denied);
+}
+
+.status.error {
+  background: rgba(217, 83, 79, 0.18);
+  color: var(--error);
+}
+
+pre {
+  background: #0c0f15;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem;
+  overflow-x: auto;
+  font-size: 0.82rem;
+  margin: 0;
+  max-height: 460px;
+}

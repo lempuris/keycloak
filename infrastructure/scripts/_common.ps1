@@ -13,8 +13,11 @@ $EnvFile     = Join-Path $RepoRoot '.env'
 
 $BaseUrl     = 'http://localhost:8080'
 $MgmtUrl     = 'http://localhost:9000'
+$ApiBaseUrl  = 'http://localhost:8081'
+$SpaBaseUrl  = 'http://localhost:4200'
 $Realm       = 'guarantee-gateway'
 $ClientId    = 'guarantee-gateway-za'
+$ApiClientId = 'guarantee-gateway-api'
 $RedirectUri = 'http://localhost:4200/'
 
 # ------------------------------------------------------------- assertions ---
@@ -250,6 +253,43 @@ function Invoke-TokenExchange {
         code          = $Code
         redirect_uri  = $RedirectUri
         code_verifier = $Verifier
+    }
+}
+
+# Logs in and returns the access token in one step.
+function Get-UserAccessToken {
+    param([string]$Username, [string]$Password)
+    $login = Invoke-PkceLogin -Username $Username -Password $Password
+    if (-not $login.Success) { throw "Login failed for ${Username}: $($login.Error)" }
+    (Invoke-TokenExchange -Code $login.Code -Verifier $login.Verifier).access_token
+}
+
+# Calls the resource server. Returns status + body instead of throwing, so the
+# tests can assert on 401/403 as first-class outcomes.
+function Invoke-ApiRequest {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [string]$Token,
+        [string]$Method = 'Get',
+        [string]$Origin
+    )
+    $client = New-HttpClient
+    try {
+        $verb = New-Object System.Net.Http.HttpMethod -ArgumentList $Method
+        $req = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ($verb, "$ApiBaseUrl$Path")
+        if ($Token)  { [void]$req.Headers.TryAddWithoutValidation('Authorization', "Bearer $Token") }
+        if ($Origin) { [void]$req.Headers.TryAddWithoutValidation('Origin', $Origin) }
+
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+        $parsed = $null
+        if ($body) { try { $parsed = $body | ConvertFrom-Json } catch { } }
+
+        @{ Status = $resp.StatusCode.value__; Body = $body; Json = $parsed; Response = $resp }
+    }
+    finally {
+        $client.Dispose()
     }
 }
 

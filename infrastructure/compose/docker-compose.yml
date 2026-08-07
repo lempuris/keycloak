@@ -44,9 +44,12 @@ services:
     # `start` (not start-dev) so we exercise the production runtime against
     # Postgres. HTTP + relaxed hostname are the only dev concessions; Phase 7
     # puts TLS and a reverse proxy in front.
+    #
+    # No --import-realm: that strategy is IGNORE_EXISTING (create-only), so realm
+    # edits would never reach an existing realm. The realm-config service below
+    # applies keycloak/realms/ idempotently instead.
     command:
       - start
-      - --import-realm
     environment:
       # --- Database (holds realm config, users, persistent sessions) ---
       KC_DB: postgres
@@ -69,9 +72,6 @@ services:
 
       # --- Logging: JSON is the audit-export path (design.md §2, no listener SPI) ---
       KC_LOG_CONSOLE_OUTPUT: ${KC_LOG_CONSOLE_OUTPUT:-default}
-    volumes:
-      # Realm config as code. Imported on first start; see docs for re-apply.
-      - ../../keycloak/realms:/opt/keycloak/data/import:ro
     ports:
       - "8080:8080"   # public
       - "9000:9000"   # management (health/metrics)
@@ -90,6 +90,93 @@ services:
       retries: 30
       start_period: 60s
     restart: unless-stopped
+
+  # Spring Boot resource server. Validates bearer JWTs only - no login logic.
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    image: keycloak-poc/guarantee-gateway-api:0.1.0
+    container_name: kc-poc-backend
+    environment:
+      # Internal URL for key fetching, external URL for issuer validation.
+      # See backend SecurityConfig for why these are not the same.
+      POC_JWK_SET_URI: http://keycloak:8080/realms/guarantee-gateway/protocol/openid-connect/certs
+      POC_ISSUER: http://localhost:8080/realms/guarantee-gateway
+      POC_AUDIENCE: guarantee-gateway-api
+      POC_CORS_ALLOWED_ORIGINS: http://localhost:4200
+    ports:
+      - "8081:8081"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8081/actuator/health/readiness | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+
+  # Angular SPA, served by nginx. Public client - holds no secret.
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    image: keycloak-poc/guarantee-gateway-portal:0.1.0
+    container_name: kc-poc-frontend
+    environment:
+      # Browser-facing URLs: these are resolved by the user's browser, not by
+      # the container, so they must be the external localhost addresses.
+      KEYCLOAK_URL: http://localhost:8080
+      KEYCLOAK_REALM: guarantee-gateway
+      KEYCLOAK_CLIENT_ID: guarantee-gateway-za
+      API_URL: http://localhost:8081
+    ports:
+      - "4200:4200"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:4200/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # Realm configuration as code (ROADMAP constraint 5).
+  # Runs to completion on every `up`, applying keycloak/realms/*.json to the live
+  # realm. Idempotent: re-running makes no further changes. This replaces
+  # --import-realm, which could only ever create a realm, never update one.
+  realm-config:
+    image: adorsys/keycloak-config-cli:6.5.1-26
+    container_name: kc-poc-realm-config
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    volumes:
+      - ../../keycloak/realms:/config:ro
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_USER: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KEYCLOAK_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      KEYCLOAK_AVAILABILITYCHECK_ENABLED: "true"
+      KEYCLOAK_AVAILABILITYCHECK_TIMEOUT: 120s
+      IMPORT_FILES_LOCATIONS: /config/*.json
+      # Lets the realm file reference secrets as $(env:NAME) instead of
+      # hardcoding them in Git - the local stand-in for Key Vault references.
+      IMPORT_VARSUBSTITUTION_ENABLED: "true"
+      # `full` would delete anything absent from the file, including Keycloak's
+      # own built-ins and users created by the Marshall mock. Users in particular
+      # are NOT config in production - they come from the provisioning feed.
+      IMPORT_MANAGED_USER: no-delete
+      IMPORT_MANAGED_ROLE: no-delete
+      IMPORT_MANAGED_CLIENT_SCOPE: no-delete
+      IMPORT_MANAGED_AUTHENTICATION_FLOW: no-delete
+      POC_TEST_PASSWORD: ${POC_TEST_PASSWORD}
+      MARSHALL_CLIENT_SECRET: ${MARSHALL_CLIENT_SECRET}
+    restart: "no"
 
 volumes:
   postgres-data:

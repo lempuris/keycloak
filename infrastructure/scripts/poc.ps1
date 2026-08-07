@@ -13,7 +13,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('up', 'down', 'reset', 'restart-keycloak', 'status', 'logs', 'export-realm')]
+    [ValidateSet('up', 'down', 'reset', 'restart-keycloak', 'status', 'logs', 'apply-realm', 'export-realm')]
     [string]$Command = 'status',
 
     [Parameter(Position = 1)]
@@ -129,14 +129,30 @@ switch ($Command) {
         else { Invoke-Compose @('logs', '-f') }
     }
 
+    'apply-realm' {
+        # Re-apply keycloak/realms/*.json to the running realm. Idempotent, so
+        # this is also the "did my edit take effect" loop.
+        Invoke-Compose @('up', '-d', '--force-recreate', 'realm-config')
+        & docker wait kc-poc-realm-config | Out-Null
+        $exit = (& docker inspect -f '{{.State.ExitCode}}' kc-poc-realm-config)
+        Invoke-Compose @('logs', '--no-log-prefix', 'realm-config')
+        if ($exit -ne '0') {
+            Write-Host "realm-config failed (exit $exit)" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host 'Realm config applied.' -ForegroundColor Green
+    }
+
     'export-realm' {
-        # Snapshot the live realm for inspection/diffing. Git-ignored by default -
-        # promote changes into keycloak/realms/ deliberately, never dump over it.
-        $outDir = Join-Path $RepoRoot 'keycloak\realms'
+        # Snapshot the live realm for inspection/diffing. Written to keycloak/exports/,
+        # NOT keycloak/realms/ - anything in realms/ is applied by config-cli, and a
+        # raw export dumped there would silently become the desired state.
+        $outDir = Join-Path $RepoRoot 'keycloak\exports'
+        if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
         Invoke-Compose @('exec', 'keycloak', '/opt/keycloak/bin/kc.sh', 'export',
             '--realm', 'guarantee-gateway',
             '--file', '/tmp/guarantee-gateway.export.json')
         & docker cp 'kc-poc-keycloak:/tmp/guarantee-gateway.export.json' (Join-Path $outDir 'guarantee-gateway.export.json')
-        Write-Host "Exported to keycloak\realms\guarantee-gateway.export.json" -ForegroundColor Green
+        Write-Host "Exported to keycloak\exports\guarantee-gateway.export.json" -ForegroundColor Green
     }
 }

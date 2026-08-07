@@ -2,9 +2,9 @@
 .env
 *.local.env
 
-# Realm exports taken from a running instance for inspection (promote
-# deliberately into keycloak/realms/ instead of committing raw dumps)
-keycloak/realms/*.export.json
+# Realm exports taken from a running instance for inspection. Never write these
+# into keycloak/realms/ - config-cli applies everything there as desired state.
+keycloak/exports/
 
 # Build output
 target/

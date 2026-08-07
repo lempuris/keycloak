@@ -1,0 +1,10 @@
+<!doctype html>
+<html>
+  <body>
+    <script>
+      // Keycloak loads this page in a hidden iframe to check for an existing SSO
+      // session without a visible redirect, then posts the result back to the app.
+      parent.postMessage(location.href, location.origin);
+    </script>
+  </body>
+</html>

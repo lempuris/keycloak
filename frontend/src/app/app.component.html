@@ -1,0 +1,76 @@
+<header>
+  <h1>Guarantee Gateway Portal</h1>
+  <span class="badge">Keycloak PoC</span>
+</header>
+
+@if (!authenticated()) {
+  <section class="card">
+    <h2>Not signed in</h2>
+    <p>
+      You are browsing anonymously. Signing in redirects to Keycloak using
+      Authorization Code + PKCE (S256); this app never sees your password.
+    </p>
+    <button class="primary" (click)="login()">Sign in</button>
+
+    <p class="hint">
+      The public endpoint works without a token &mdash; try it to confirm the API
+      is up before authenticating.
+    </p>
+    <button (click)="call('/api/public/info')">GET /api/public/info</button>
+  </section>
+} @else {
+  <section class="card">
+    <h2>Signed in as {{ username() }}</h2>
+    <p>
+      Realm roles:
+      @for (role of roles(); track role) {
+        <code class="role">{{ role }}</code>
+      } @empty {
+        <em>none</em>
+      }
+    </p>
+    <button (click)="showToken()">Show access token claims</button>
+    <button (click)="logout()">Sign out</button>
+  </section>
+
+  <section class="card">
+    <h2>Call the API</h2>
+    <p class="hint">
+      Each call attaches the current access token. Endpoints your role does not
+      cover return <strong>403</strong> &mdash; that decision is made by the API
+      from the role claim, not by hiding the button.
+    </p>
+
+    <div class="actions">
+      <button [disabled]="busy()" (click)="call('/api/me')">
+        GET /api/me
+      </button>
+
+      <button
+        [disabled]="busy()"
+        [class.expected]="isFacilityHolder()"
+        (click)="call('/api/facilities')">
+        GET /api/facilities
+        <small>{{ isFacilityHolder() ? 'expect 200' : 'expect 403' }}</small>
+      </button>
+
+      <button
+        [disabled]="busy()"
+        [class.expected]="isBroker()"
+        (click)="call('/api/broker/portfolio')">
+        GET /api/broker/portfolio
+        <small>{{ isBroker() ? 'expect 200' : 'expect 403' }}</small>
+      </button>
+    </div>
+  </section>
+}
+
+@if (result(); as r) {
+  <section class="card">
+    <h2>
+      {{ r.path }}
+      <span class="status {{ statusClass(r.status) }}">{{ r.status }}</span>
+    </h2>
+    <pre>{{ r.body }}</pre>
+  </section>
+}

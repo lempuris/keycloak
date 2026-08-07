@@ -81,6 +81,32 @@
     }
   ],
 
+  "clientScopes": [
+    {
+      "name": "guarantee-gateway-api-audience",
+      "description": "Adds guarantee-gateway-api to the access token audience so the API can enforce an aud check.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "guarantee-gateway-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "guarantee-gateway-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+
   "clients": [
     {
       "clientId": "guarantee-gateway-za",
@@ -112,9 +138,37 @@
         "profile",
         "roles",
         "basic",
-        "email"
+        "email",
+        "guarantee-gateway-api-audience"
       ],
       "optionalClientScopes": ["address", "phone"]
+    },
+    {
+      "clientId": "guarantee-gateway-api",
+      "name": "Guarantee Gateway API",
+      "description": "Resource server. Validates bearer JWTs only - no flows enabled; exists so tokens carry a meaningful aud claim.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false
+    },
+    {
+      "clientId": "marshall-provisioning",
+      "name": "Marshall Provisioning Service",
+      "description": "Service account used by the Marshall mock to call the Admin API. Least privilege: realm-management/manage-users only.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "$(env:MARSHALL_CLIENT_SECRET)",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false
     }
   ],
 
@@ -136,7 +190,7 @@
       "credentials": [
         {
           "type": "password",
-          "value": "PocDemo!2026x",
+          "value": "$(env:POC_TEST_PASSWORD)",
           "temporary": false
         }
       ],
@@ -153,12 +207,20 @@
       "credentials": [
         {
           "type": "password",
-          "value": "PocDemo!2026x",
+          "value": "$(env:POC_TEST_PASSWORD)",
           "temporary": false
         }
       ],
       "realmRoles": ["broker"],
       "groups": ["/brokers"]
+    },
+    {
+      "username": "service-account-marshall-provisioning",
+      "enabled": true,
+      "serviceAccountClientId": "marshall-provisioning",
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "view-realm"]
+      }
     }
   ]
 }
