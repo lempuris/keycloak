@@ -99,6 +99,13 @@ Write-Host ''
 Assert-That -Name 'Keycloak returns to healthy after restart' -Condition $ready
 if (-not $ready) { Write-TestSummary }
 
+# Healthy != serving. Until the realm endpoint answers for real, an authorize
+# request comes back as "Bootstrap in progress" and looks exactly like a lost
+# session. See Wait-ForRealmEndpoint.
+$serving = Wait-ForRealmEndpoint
+Assert-That -Name 'Realm endpoint is serving again' -Condition $serving
+if (-not $serving) { Write-TestSummary }
+
 # --- 3. Session must have survived ---
 Write-Host ''
 Write-Host '3. Re-authorize with the pre-restart cookies' -ForegroundColor Cyan

@@ -141,6 +141,13 @@
       "name": "brokers",
       "path": "/brokers",
       "realmRoles": ["broker"]
+    },
+    {
+      "name": "support-desk",
+      "path": "/support-desk",
+      "clientRoles": {
+        "realm-management": ["view-realm", "view-users", "manage-users", "view-events"]
+      }
     }
   ],
 
@@ -222,7 +229,7 @@
     {
       "clientId": "marshall-provisioning",
       "name": "Marshall Provisioning Service",
-      "description": "Service account used by the Marshall mock to call the Admin API. Least privilege: realm-management/manage-users only.",
+      "description": "Marshall mock's Admin API identity. Least privilege: realm-management manage-users/view-users/view-realm. Those roles need BOTH a user role-mapping and a clientScopeMappings entry - with fullScopeAllowed=false they are otherwise stripped from the token.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
@@ -241,6 +248,15 @@
       "roles": ["facility-holder", "broker"]
     }
   ],
+
+  "clientScopeMappings": {
+    "realm-management": [
+      {
+        "client": "marshall-provisioning",
+        "roles": ["manage-users", "view-users", "view-realm"]
+      }
+    ]
+  },
 
   "users": [
     {

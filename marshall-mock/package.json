@@ -5,10 +5,13 @@
   "private": true,
   "type": "module",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/server.js"
   },
   "dependencies": {
-    "express": "^5.1.0"
+    "express": "5.1.0"
   }
 }

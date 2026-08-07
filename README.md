@@ -8,9 +8,9 @@ resource server + an Angular SPA, with the realm applied as code.
 in the internal docs folder alongside this repo, not inside it — section
 references below (`§5`, `§7`) point there.
 
-**State: Phases 0–4 complete and verified. Phase 5 (Marshall mock) is a sketch.**
-See [Status](#status) for what that means in practice, including one design
-requirement the PoC proved cannot be met without a custom SPI.
+**State: Phases 0–5 complete and verified.** See [Status](#status) for what that
+means in practice, including one design requirement the PoC proved cannot be met
+without a custom SPI.
 
 ---
 
@@ -34,6 +34,7 @@ job, the API and the SPA.
 |---|---|
 | SPA (Angular) | http://localhost:4200 |
 | API (Spring Boot) | http://localhost:8081 |
+| Marshall provisioning mock | http://localhost:8090/health |
 | Admin console | http://localhost:8080/admin |
 | Account console | http://localhost:8080/realms/guarantee-gateway/account |
 | Discovery document | http://localhost:8080/realms/guarantee-gateway/.well-known/openid-configuration |
@@ -72,8 +73,9 @@ login form, posting credentials, and reading the OTP out of Mailpit.
 ```powershell
 .\infrastructure\scripts\smoke-test.ps1                       # 29 checks (32 with -TestLockout)
 .\infrastructure\scripts\test-api.ps1                         # 15 — SPA -> API, role enforcement
-.\infrastructure\scripts\test-session-persistence.ps1         # 6  — sessions survive restart
+.\infrastructure\scripts\test-session-persistence.ps1         # 7  — sessions survive restart
 .\infrastructure\scripts\test-otp-flow.ps1                    # 28 — 27 pass, 1 deliberately red
+.\infrastructure\scripts\test-provisioning.ps1                # 44 — Marshall lifecycle -> Keycloak
 ```
 
 `test-otp-flow.ps1` asserts that failed OTP attempts feed the brute-force
@@ -92,7 +94,7 @@ Shared helpers live in `infrastructure/scripts/_common.ps1`.
 | 2 — Core realm as code | Done. Applied by keycloak-config-cli 6.5.1, idempotent (2nd run = zero changes) |
 | 3 — App integration | Done. Spring Boot 3.5.3 API + Angular 22 SPA, 200/403 verified in scripts and in a browser |
 | 4 — Email OTP flow | Done, **1 requirement unmet** (Finding 3) |
-| 5 — Marshall mock | **Sketch only.** `src/keycloak-admin.js` exists; no `server.js`, no Dockerfile, no compose entry, untested |
+| 5 — Marshall mock | Done. Express 5 service on `:8090` driving the Admin API as a scoped service account; 44 assertions |
 | 6 — Clustering (JDBC_PING) | Not started. Highest value for the Azure build |
 | 7–8 — TLS/proxy, key rotation, pipeline, cutover | Not started |
 
@@ -128,6 +130,20 @@ The point of the PoC is what it disproved. Full write-ups in `docs/`.
    `http://keycloak:8080` but validates `iss` as `http://localhost:8080`, so it
    builds a `JwtDecoder` by hand rather than using `issuer-uri`. Exactly what app
    teams will hit at IS4 cutover.
+8. **`fullScopeAllowed: false` silently disables a service account.** Granting
+   `manage-users` to the provisioning service account was not enough — every
+   Admin API call returned 403, because the roles are filtered out of the token
+   and Keycloak authorizes from the token. Needs a `clientScopeMappings` entry
+   as well. The failure looks like a wrong secret, so it costs time.
+   → `docs/phase-05-findings.md`
+9. **Health-ready is not serving.** After a restart, `/health/ready` on `:9000`
+   reports UP while `:8080` still answers `Bootstrap in progress`. If the ACA
+   readiness probe points at the management port, logins fail during every
+   rolling restart. → `docs/phase-05-findings.md`
+10. **Disabling a user does not revoke anything.** Offboarding must disable *and*
+    end sessions; even then an already-issued access token works until it
+    expires. Residual access after offboarding is exactly one access-token
+    lifetime — which is what the 5-minute setting buys.
 
 ## What is configured, and why
 
@@ -169,7 +185,39 @@ re-running `poc.ps1 apply-realm` reaches a realm that already exists, which
 Secrets are referenced as `$(env:NAME)` rather than hardcoded — the local
 stand-in for Key Vault secret references. `IMPORT_MANAGED_USER=no-delete` is
 mandatory: `full` would delete users created by the Marshall provisioning feed,
-and users are not configuration.
+and users are not configuration. `test-provisioning.ps1` asserts that a
+provisioned user survives a realm-config run, so that setting cannot be quietly
+"tidied up".
+
+## Provisioning (the Marshall pivot)
+
+Marshall stays the business system of record; the users live in Keycloak. Every
+lifecycle event is therefore pushed at Keycloak rather than resolved at login:
+
+```text
+Marshall  --HTTP-->  marshall-mock  --Admin API-->  Keycloak
+```
+
+Keycloak never calls Marshall. That direction is the point — Marshall being down
+delays provisioning but cannot break a login, which the rejected user-storage-SPI
+option could not promise. `marshall-mock/` is ordinary Express code in its own
+container; nothing runs inside Keycloak.
+
+It authenticates with `client_credentials` as the `marshall-provisioning`
+service account, scoped to `manage-users` / `view-users` / `view-realm` — not the
+master admin. The test proves the boundary from the other side too: the same
+token gets 403 creating a client, editing realm settings, or touching the master
+realm.
+
+Deactivation is two operations. Disabling the account blocks the next login;
+ending the sessions is what revokes access that already exists. Even then, an
+access token already issued keeps working until it expires — at most 5 minutes.
+That is the concrete argument for the short `accessTokenLifespan`, and
+`docs/phase-05-findings.md` has the measurements.
+
+Support workflows move with the users: `docs/runbook-user-support.md`.
+Cutover credentials are an open Credeq decision:
+`docs/decision-credential-migration.md`.
 
 ## Layout
 
@@ -184,7 +232,7 @@ keycloak-poc/
 │   └── themes/                      # (Phase 4) login theme — not built
 ├── backend/                         # Spring Boot resource server (JWT validation only)
 ├── frontend/                        # Angular SPA (public client, Auth Code + PKCE)
-├── marshall-mock/                   # (Phase 5) provisioning mock — sketch
+├── marshall-mock/                   # provisioning mock — Admin API client, no Keycloak code
 └── docs/                            # decision records and per-phase findings
 ```
 

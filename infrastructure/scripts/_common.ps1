@@ -16,6 +16,7 @@ $MgmtUrl     = 'http://localhost:9000'
 $ApiBaseUrl  = 'http://localhost:8081'
 $SpaBaseUrl  = 'http://localhost:4200'
 $MailpitUrl  = 'http://localhost:8025'
+$MarshallUrl = 'http://localhost:8090'
 $Realm       = 'guarantee-gateway'
 $ClientId    = 'guarantee-gateway-za'
 $ApiClientId = 'guarantee-gateway-api'
@@ -406,7 +407,8 @@ function Invoke-ApiRequest {
     )
     $client = New-HttpClient
     try {
-        $verb = New-Object System.Net.Http.HttpMethod -ArgumentList $Method
+        # Uppercase for the same reason as Invoke-JsonRequest - see the note there.
+        $verb = New-Object System.Net.Http.HttpMethod -ArgumentList $Method.ToUpperInvariant()
         $req = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ($verb, "$ApiBaseUrl$Path")
         if ($Token)  { [void]$req.Headers.TryAddWithoutValidation('Authorization', "Bearer $Token") }
         if ($Origin) { [void]$req.Headers.TryAddWithoutValidation('Origin', $Origin) }
@@ -449,4 +451,140 @@ function Invoke-AdminApi {
         $params.ContentType = 'application/json'
     }
     Invoke-RestMethod @params
+}
+
+<#
+    Active SSO sessions for a user.
+
+    Do not call the endpoint directly and count the result. When the user has no
+    sessions Keycloak answers `[]`, and Invoke-RestMethod hands that back as a
+    single empty-array object - so `@(...)` reports Count = 1 and a revocation
+    test passes when nothing was revoked, or fails when everything was. Filtering
+    on a field every real session has is what makes the count trustworthy.
+
+    Callers must still wrap the result in @() - PowerShell unrolls a
+    single-element array on return, and a lone session comes back as a scalar
+    whose .Count is $null. Same rule as Get-MailboxMessages.
+#>
+function Get-UserSessionList {
+    param([string]$Token, [string]$UserId)
+    @((Invoke-AdminApi -Token $Token -Path "$Realm/users/$UserId/sessions") | Where-Object { $_.id })
+}
+
+# ------------------------------------------------------- json over http ---
+
+<#
+    Status-first HTTP. Invoke-RestMethod throws on 4xx, which makes "assert this
+    is forbidden" awkward; these return the status as data instead.
+#>
+function Invoke-JsonRequest {
+    param(
+        [Parameter(Mandatory)][string]$Url,
+        [string]$Method = 'Get',
+        $Body,
+        [hashtable]$Headers = @{}
+    )
+    $client = New-HttpClient
+    try {
+        # Uppercase deliberately. HTTP method tokens are case-sensitive, and
+        # HttpMethod does not normalize them - it hands 'Patch' to the wire
+        # verbatim. Node's parser rejects that with a bare 400 before Express
+        # ever sees the request, so the server logs nothing and the failure
+        # looks like a routing bug. 'Get'/'Post' happen to survive because
+        # .NET Framework normalizes its own table of known verbs; PATCH and
+        # DELETE do not get that treatment here.
+        $verb = New-Object System.Net.Http.HttpMethod -ArgumentList $Method.ToUpperInvariant()
+        $req = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ($verb, $Url)
+        foreach ($k in $Headers.Keys) { [void]$req.Headers.TryAddWithoutValidation($k, $Headers[$k]) }
+        if ($null -ne $Body) {
+            $json = ($Body | ConvertTo-Json -Depth 10)
+            $req.Content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, 'application/json')
+        }
+
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+        $parsed = $null
+        if ($text) { try { $parsed = $text | ConvertFrom-Json } catch { } }
+
+        @{ Status = $resp.StatusCode.value__; Body = $text; Json = $parsed }
+    }
+    finally {
+        $client.Dispose()
+    }
+}
+
+<#
+    Waits until Keycloak actually serves the realm on its public port.
+
+    The container healthcheck is not enough. After a restart, /health/ready on
+    :9000 reports UP while :8080 still answers every request with the plain-text
+    body "Bootstrap in progress. Retry in 1 seconds." A test that starts as soon
+    as the container is healthy therefore sees neither a login form nor a
+    redirect, and reports a lost session when the session is fine.
+#>
+function Wait-ForRealmEndpoint {
+    param([int]$TimeoutSeconds = 120)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $probe = Invoke-JsonRequest -Url "$BaseUrl/realms/$Realm/.well-known/openid-configuration"
+        if ($probe.Status -eq 200 -and $probe.Body -notmatch 'Bootstrap in progress') { return $true }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+# ------------------------------------------------------- marshall mock ---
+
+# Calls the Phase 5 provisioning mock, i.e. simulates a Marshall lifecycle event.
+function Invoke-MarshallApi {
+    param([Parameter(Mandatory)][string]$Path, [string]$Method = 'Get', $Body)
+    Invoke-JsonRequest -Url "$MarshallUrl$Path" -Method $Method -Body $Body
+}
+
+<#
+    The token the mock itself uses: client_credentials against the
+    `marshall-provisioning` service-account client. Tests borrow it to prove the
+    least-privilege boundary directly, without going through the mock.
+#>
+function Get-ServiceAccountToken {
+    param([hashtable]$Env)
+    (Invoke-RestMethod -Method Post -Uri "$BaseUrl/realms/$Realm/protocol/openid-connect/token" -Body @{
+        grant_type    = 'client_credentials'
+        client_id     = 'marshall-provisioning'
+        client_secret = $Env['MARSHALL_CLIENT_SECRET']
+    }).access_token
+}
+
+# Admin API call that reports 403 rather than throwing it.
+function Invoke-AdminApiStatus {
+    param([string]$Token, [string]$Path, [string]$Method = 'Get', $Body)
+    Invoke-JsonRequest -Url "$BaseUrl/admin/realms/$Path" -Method $Method -Body $Body `
+                       -Headers @{ Authorization = "Bearer $Token" }
+}
+
+# Redeems a refresh token. Used to show that revocation kills refresh while an
+# already-issued access token keeps working to its expiry.
+function Invoke-RefreshGrant {
+    param([string]$RefreshToken)
+    $client = New-HttpClient
+    try {
+        $pairs = New-Object 'System.Collections.Generic.List[System.Collections.Generic.KeyValuePair[String,String]]'
+        @{ grant_type = 'refresh_token'; client_id = $ClientId; refresh_token = $RefreshToken }.GetEnumerator() |
+            ForEach-Object { $pairs.Add((New-Object 'System.Collections.Generic.KeyValuePair[String,String]'($_.Key, $_.Value))) }
+        $content = New-Object System.Net.Http.FormUrlEncodedContent -ArgumentList (, $pairs)
+
+        $req = New-Object System.Net.Http.HttpRequestMessage -ArgumentList ([System.Net.Http.HttpMethod]::Post, "$BaseUrl/realms/$Realm/protocol/openid-connect/token")
+        $req.Content = $content
+
+        $resp = $client.SendAsync($req).GetAwaiter().GetResult()
+        $text = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        $parsed = $null
+        if ($text) { try { $parsed = $text | ConvertFrom-Json } catch { } }
+
+        @{ Status = $resp.StatusCode.value__; Body = $text; Json = $parsed }
+    }
+    finally {
+        $client.Dispose()
+    }
 }
